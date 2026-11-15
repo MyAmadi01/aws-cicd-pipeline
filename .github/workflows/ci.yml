@@ -1,3 +1,4 @@
+
 name: AWS CI/CD Pipeline
 
 on:
@@ -8,10 +9,22 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+
 jobs:
   build-and-test:
-    name: Build and Test Application
+    name: Build, Test and Push to ECR
     runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write
+
+    env:
+      ECR_REGISTRY: 695746118696.dkr.ecr.us-east-1.amazonaws.com
+      ECR_REPOSITORY: aws-cicd-pipeline
+      IMAGE_TAG: ${{ github.sha }}
 
     steps:
       - name: Checkout Repository
@@ -28,12 +41,34 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run Automated Tests
-        run: |
-          python -m pytest -v
+        run: python -m pytest -v
 
       - name: Build Docker Image
         run: |
-          docker build -t aws-cicd-pipeline:${{ github.sha }} .
+          docker build -t aws-cicd-pipeline:${IMAGE_TAG} .
+
+      - name: Configure AWS Credentials
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: aws-actions/amazon-ecr-login@v2
+          
+      - name: Tag Docker Image
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          docker tag aws-cicd-pipeline:${IMAGE_TAG} ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}
+          docker tag aws-cicd-pipeline:${IMAGE_TAG} ${ECR_REGISTRY}/${ECR_REPOSITORY}:latest
+
+      - name: Push Docker Image to ECR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          docker push ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}
+          docker push ${ECR_REGISTRY}/${ECR_REPOSITORY}:latest
 
       - name: Pipeline Success
-        run: echo "CI pipeline completed successfully!"
+        run: echo "CI/CD pipeline completed successfully!"
